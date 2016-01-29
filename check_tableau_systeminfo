@@ -1,4 +1,4 @@
-#!/usr/bin/env ruby -w
+#!/usr/bin/ruby -w
 
 #       Usage: check_tableau_systeminfo -H <hostname>|-f [<file.xml>]
 # Description: check_tableau_systeminfo parses Tableau's systeminfo and reports Nagios status
@@ -92,13 +92,15 @@
    elsif options[:hostname]
       if options[:verbose] : puts "contacting host #{options[:hostname]}" end
       begin
-         url = URI.parse("http://#{options[:hostname]}/admin/systeminfo")
+         url = URI.parse("http://#{options[:hostname]}/admin/systeminfo.xml")
          req = Net::HTTP::Get.new(url.path)
          res = Net::HTTP.start(url.host, url.port) {|http|
             http.request(req)
          }
          if options[:verbose] : puts "parsing systeminfo\n#{res.body}" end
          systeminfo = XmlSimple.xml_in(res.body, { 'KeyAttr' => 'name' })
+      rescue Timeout::Error
+         nagiosMessageExit('C', "#{$!}")
       rescue Errno::ECONNREFUSED
          nagiosMessageExit('C', "#{$!}")
       rescue REXML::ParseException
@@ -108,17 +110,27 @@
       end
    end
 
+#      systeminfo["machines"][0]["machine"]["Primary"].each do |service|
 # analyze systeminfo   
    if systeminfo["machines"]
-      systeminfo["machines"][0]["machine"]["Primary"].each do |service|
+      systeminfo["machines"][0]["machine"]["TABLEAUSRV02"].each do |service|
          busy_c = 0
          service[1].each do |serviceinstance|
-            if (serviceinstance["status"].casecmp "down") == 0
-               $ns['C']['m'] += "#{service[0]} #{serviceinstance["worker"]} is DOWN! "
-               $ns['C']['f'] = true
-               break
-            elsif (serviceinstance["status"].casecmp "busy") == 0
-               busy_c += 1
+	    if options[:verbose] : puts "service #{service[0]} #{serviceinstance["status"]}" end
+            if (service[0] == "filestore")
+              if (serviceinstance["failedTransfers"].to_i >0)
+                $ns['C']['m'] += "filestore failedTransfers >0 "
+                $ns['C']['f'] = true
+              end
+            end
+            if (serviceinstance["status"].casecmp("Active") < 0)
+              if (serviceinstance["status"].casecmp("busy")) == 0
+                busy_c += 1
+              else
+                $ns['C']['m'] += "#{service[0]} is DOWN! "
+                $ns['C']['f'] = true
+                break
+              end
             end
          end
          break if $ns['C']['f']
